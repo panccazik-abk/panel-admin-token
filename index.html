@@ -10,15 +10,11 @@
   * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
   body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; transition: 0.3s; }
 
-  #loginPage { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-  .login-box { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 32px 24px; width: 100%; max-width: 400px; }
-  .login-box h1 { font-size: 22px; margin: 0 0 8px; color: var(--accent); }
-  .login-box p { font-size: 13px; color: var(--text-dim); margin: 0 0 24px; }
-  .login-box input { width: 100%; padding: 12px 14px; margin-bottom: 12px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; }
-  .login-box input:focus { border-color: var(--accent); }
-  .login-box button { width: 100%; padding: 12px; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
-  .login-box button:disabled { opacity: 0.5; cursor: not-allowed; }
-  #loginError { color: #f87171; font-size: 13px; margin-top: 12px; text-align: center; }
+  /* LOADING SCREEN */
+  #loadingScreen { display: flex; align-items: center; justify-content: center; min-height: 100vh; flex-direction: column; gap: 16px; }
+  .spinner { width: 40px; height: 40px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loadingText { color: var(--text-dim); font-size: 13px; }
 
   #dashboardPage { display: none; padding: 16px; max-width: 1100px; margin: 0 auto; padding-bottom: 40px; }
   .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
@@ -105,17 +101,13 @@
 </head>
 <body>
 
-<div id="loginPage">
-  <div class="login-box">
-    <h1>🔐 Panel Admin Pro</h1>
-    <p>Token APK Panel — Realtime Server</p>
-    <input type="email" id="username" placeholder="Email admin" autocomplete="username">
-    <input type="password" id="password" placeholder="Password" autocomplete="current-password">
-    <button id="loginBtn" onclick="doLogin()">Login</button>
-    <div id="loginError"></div>
-  </div>
+<!-- LOADING SCREEN (Tampil sebentar saat auto-login) -->
+<div id="loadingScreen">
+  <div class="spinner"></div>
+  <div id="loadingText">Memuat Panel Admin...</div>
 </div>
 
+<!-- DASHBOARD (Langsung tampil setelah auto-login berhasil) -->
 <div id="dashboardPage">
   <div class="topbar">
     <div>
@@ -319,7 +311,6 @@ let refreshInterval = null, lastHash = "", currentLogFilter = "all";
 const AUTO_EMAIL = "panccazik@gmail.com";
 const AUTO_PASS  = "Menteng10310";
 
-// ===== HITUNG SISA HARI =====
 function hitungSisaHari(expiry) {
   if (!expiry) return 0;
   try {
@@ -343,31 +334,16 @@ async function apiFetch(url, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (token) headers["Authorization"] = "Bearer " + token;
   const res = await fetch(url, { ...options, headers });
-  if (res.status === 401) { toast("❌ Sesi habis, login ulang", "error"); doLogout(); throw new Error("Unauthorized"); }
+  if (res.status === 401) { 
+    toast("❌ Sesi habis, login ulang otomatis...", "error"); 
+    token = "";
+    localStorage.removeItem("admin_token");
+    autoLoginNow();
+    throw new Error("Unauthorized"); 
+  }
   return res;
 }
 
-// ===== ANTI BRUTE FORCE =====
-const MAX_ATTEMPTS = 5, LOCKOUT_MS = 5 * 60 * 1000;
-function getAttempts() { try { return JSON.parse(localStorage.getItem("login_attempts") || "{}"); } catch { return {}; } }
-function setAttempts(a) { localStorage.setItem("login_attempts", JSON.stringify(a)); }
-function checkLockout() {
-  const a = getAttempts();
-  if (a.lockedUntil && Date.now() < a.lockedUntil) {
-    const sisa = Math.ceil((a.lockedUntil - Date.now()) / 1000);
-    return `Terlalu banyak percobaan. Coba lagi dalam ${sisa} detik.`;
-  }
-  return null;
-}
-function recordFailed() {
-  const a = getAttempts();
-  a.count = (a.count || 0) + 1;
-  if (a.count >= MAX_ATTEMPTS) { a.lockedUntil = Date.now() + LOCKOUT_MS; a.count = 0; }
-  setAttempts(a);
-}
-function clearAttempts() { localStorage.removeItem("login_attempts"); }
-
-// ===== THEME =====
 function toggleTheme() {
   const current = document.documentElement.getAttribute("data-theme") || "dark";
   const next = current === "dark" ? "light" : "dark";
@@ -391,52 +367,15 @@ function toast(msg, type = "info") {
   setTimeout(() => t.className = "", 2500);
 }
 
-// ===== LOGIN MANUAL (jika auto login gagal) =====
-async function doLogin() {
-  const err = document.getElementById("loginError");
-  const lock = checkLockout();
-  if (lock) { err.textContent = "❌ " + lock; return; }
-
-  const username = document.getElementById("username").value.trim();
-  const password = document.getElementById("password").value;
-  const btn = document.getElementById("loginBtn");
-
-  if (!username || !password) { err.textContent = "Isi email & password"; return; }
-  btn.disabled = true; btn.textContent = "Memproses..."; err.textContent = "";
-
-  try {
-    const res = await fetch(`${API_BASE}/login`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (!res.ok || !data.token) throw new Error(data.message || "Email atau password salah");
-
-    token = data.token;
-    localStorage.setItem("admin_token", token);
-    clearAttempts();
-    showDashboard(username);
-    addLog("login", `Admin ${username} login`);
-    toast("✅ Login berhasil!", "success");
-  } catch (e) {
-    recordFailed();
-    const a = getAttempts();
-    const sisa = MAX_ATTEMPTS - (a.count || 0);
-    err.textContent = `❌ ${e.message}${sisa > 0 && sisa < MAX_ATTEMPTS ? ` (${sisa}x lagi)` : ""}`;
-    btn.disabled = false; btn.textContent = "Login";
-  }
-}
-
 function doLogout() {
+  if (!confirm("Logout? Halaman akan reload dan auto-login lagi.")) return;
   token = ""; localStorage.removeItem("admin_token");
   if (refreshInterval) clearInterval(refreshInterval);
-  document.getElementById("loginPage").style.display = "flex";
-  document.getElementById("dashboardPage").style.display = "none";
-  document.getElementById("password").value = "";
+  location.reload();
 }
 
 function showDashboard(username) {
-  document.getElementById("loginPage").style.display = "none";
+  document.getElementById("loadingScreen").style.display = "none";
   document.getElementById("dashboardPage").style.display = "block";
   document.getElementById("userInfo").textContent = "Login: " + username;
   loadUsers(); loadConfig(); loadMessages(); loadLogs(); loadAdmins();
@@ -885,9 +824,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
-// ===== AUTO LOGIN OTOMATIS (kapan saja dibuka) =====
-(async function autoLogin() {
-  // 1. Kalau ada token lama, coba pakai dulu
+// ===== AUTO LOGIN SILENT (Tanpa Form Login) =====
+async function autoLoginNow() {
+  document.getElementById("loadingScreen").style.display = "flex";
+  document.getElementById("dashboardPage").style.display = "none";
+  document.getElementById("loadingText").textContent = "Memuat Panel Admin...";
+
+  // 1. Coba pakai token lama
   if (token) {
     try {
       const res = await fetch(`${API_BASE}/users?action=list`, {
@@ -897,10 +840,10 @@ document.addEventListener("DOMContentLoaded", () => {
         showDashboard("admin");
         return;
       }
-    } catch (e) { /* lanjut ke auto-login baru */ }
+    } catch (e) { /* Lanjut auto login baru */ }
   }
 
-  // 2. Auto login pakai email & password hardcoded
+  // 2. Auto login dengan kredensial hardcoded
   try {
     const res = await fetch(`${API_BASE}/login`, {
       method: "POST",
@@ -913,12 +856,17 @@ document.addEventListener("DOMContentLoaded", () => {
       localStorage.setItem("admin_token", token);
       showDashboard(data.username || "admin");
     } else {
-      console.log("Auto login gagal:", data.message);
+      document.getElementById("loadingText").textContent = "❌ Gagal login: " + (data.message || "Unknown error");
+      document.getElementById("loadingText").style.color = "#f87171";
     }
   } catch (e) {
-    console.log("Auto login error:", e.message);
+    document.getElementById("loadingText").textContent = "❌ Error: " + e.message;
+    document.getElementById("loadingText").style.color = "#f87171";
   }
-})();
+}
+
+// Jalankan auto-login saat halaman dibuka
+autoLoginNow();
 </script>
 </body>
-                                                                                       </html>
+  </html>

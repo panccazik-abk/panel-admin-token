@@ -1,8 +1,8 @@
 import { getStore } from "@netlify/blobs";
 
-
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
-const ADMIN_PASS  = process.env.ADMIN_PASS;
+// ===== KREDENSIAL ADMIN UTAMA (HARDCODED) =====
+const DEFAULT_ADMIN_EMAIL = "panccazik@gmail.com";
+const DEFAULT_ADMIN_PASS  = "Menteng10310";
 
 export default async (req, context) => {
   const headers = {
@@ -20,14 +20,21 @@ export default async (req, context) => {
 
   try {
     const { username, password } = await req.json();
+    const store = getStore("panel-data");
 
-    let isValid = (username === ADMIN_EMAIL && password === ADMIN_PASS);
+    // 1. Cek apakah login cocok dengan ADMIN UTAMA (hardcoded)
+    let isValid = (username === DEFAULT_ADMIN_EMAIL && password === DEFAULT_ADMIN_PASS);
+    let finalRole = "owner";
 
+    // 2. Jika bukan admin utama, cek ke database Netlify Blobs
     if (!isValid) {
       try {
-        const store = getStore("panel-data");
         const admins = await store.get("admins", { type: "json" }) || [];
-        isValid = admins.some(a => a.username === username && a.password === password);
+        const foundAdmin = admins.find(a => a.username === username && a.password === password);
+        if (foundAdmin) {
+          isValid = true;
+          finalRole = foundAdmin.role || "admin";
+        }
       } catch (e) { console.error("Error cek admins:", e); }
     }
 
@@ -35,12 +42,24 @@ export default async (req, context) => {
       return new Response(JSON.stringify({ success: false, message: "Email atau password salah" }), { status: 401, headers });
     }
 
+    // 3. AUTO-REGISTER admin utama ke database jika belum ada (agar muncul di list admin)
+    if (username === DEFAULT_ADMIN_EMAIL) {
+      try {
+        let admins = await store.get("admins", { type: "json" }) || [];
+        const exists = admins.some(a => a.username === DEFAULT_ADMIN_EMAIL);
+        if (!exists) {
+          admins.push({ username: DEFAULT_ADMIN_EMAIL, password: DEFAULT_ADMIN_PASS, role: "owner" });
+          await store.setJSON("admins", admins);
+        }
+      } catch (e) { console.error("Gagal auto-register admin:", e); }
+    }
+
+    // 4. Buat Sesi Token
     const randomPart = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     const token = btoa(username + ":" + Date.now() + ":" + randomPart);
 
-    const store = getStore("panel-data");
     let sessions = await store.get("sessions", { type: "json" }) || {};
-    sessions[token] = { username, created_at: Date.now(), expires_at: Date.now() + (24 * 60 * 60 * 1000) };
+    sessions[token] = { username, role: finalRole, created_at: Date.now(), expires_at: Date.now() + (24 * 60 * 60 * 1000) };
 
     const now = Date.now();
     for (const t of Object.keys(sessions)) {
@@ -48,7 +67,7 @@ export default async (req, context) => {
     }
     await store.setJSON("sessions", sessions);
 
-    return new Response(JSON.stringify({ success: true, token, username }), { status: 200, headers });
+    return new Response(JSON.stringify({ success: true, token, username, role: finalRole }), { status: 200, headers });
 
   } catch (e) {
     return new Response(JSON.stringify({ success: false, message: "Error: " + e.message }), { status: 500, headers });

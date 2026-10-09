@@ -28,9 +28,12 @@ export default async (req, context) => {
   if (method === "OPTIONS") return new Response(null, { status: 204, headers });
 
   try {
-    if (method === "GET" && action === "list") {
-      const messages = await store.get("messages", { type: "json" }) || [];
-      return new Response(JSON.stringify({ success: true, messages }), { status: 200, headers });
+    // Ambil pesan terbaru untuk user (PUBLIK, dipakai APK)
+    if (method === "GET" && action === "latest") {
+      const username = url.searchParams.get("username");
+      let messages = await store.get("messages", { type: "json" }) || [];
+      const userMsgs = messages.filter(m => m.target === "all" || m.target === username).slice(-1)[0];
+      return new Response(JSON.stringify({ success: true, message: userMsgs || null }), { status: 200, headers });
     }
 
     const isAuth = await verifyToken(req);
@@ -38,24 +41,25 @@ export default async (req, context) => {
       return new Response(JSON.stringify({ success: false, message: "Unauthorized" }), { status: 401, headers });
     }
 
+    if (method === "GET" && action === "list") {
+      const messages = await store.get("messages", { type: "json" }) || [];
+      return new Response(JSON.stringify({ success: true, messages }), { status: 200, headers });
+    }
+
     if (method === "POST") {
       const body = await req.json();
-      const { target, type, content } = body;
-      if (!content) throw new Error("Pesan kosong");
-      if (!target) throw new Error("Target tidak valid");
-
       let messages = await store.get("messages", { type: "json" }) || [];
       const newMsg = {
-        id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
-        target, type: type || "info", content,
-        timestamp: new Date().toISOString(),
-        read: false
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+        target: body.target || "all",
+        type: body.type || "info",
+        content: body.content || "",
+        timestamp: new Date().toISOString()
       };
       messages.push(newMsg);
-      if (messages.length > 100) messages = messages.slice(-100);
-
+      if (messages.length > 100) messages.splice(0, messages.length - 100);
       await store.setJSON("messages", messages);
-      return new Response(JSON.stringify({ success: true, message: "Pesan terkirim", data: newMsg }), { status: 200, headers });
+      return new Response(JSON.stringify({ success: true, message: newMsg }), { status: 200, headers });
     }
 
     if (method === "DELETE") {

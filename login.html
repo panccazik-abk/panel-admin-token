@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>System Access</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', -apple-system, sans-serif; }
+  body { background: #000; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: #fff; }
+  .bg-glow { position: fixed; inset: 0; background: radial-gradient(circle at 50% 45%, rgba(255,193,7,0.15), transparent 60%); pointer-events: none; z-index: 0; }
+  .login-box {
+    position: relative; width: 100%; max-width: 360px;
+    background: rgba(10,10,10,0.9); border: 2px solid #f0b400; border-radius: 24px;
+    padding: 40px 24px 32px; z-index: 1;
+    box-shadow: 0 0 40px rgba(240,180,0,0.2);
+  }
+  .lock-icon {
+    position: absolute; top: -24px; left: 50%; transform: translateX(-50%);
+    width: 48px; height: 48px; background: #000; border: 2px solid #f0b400; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 22px;
+  }
+  .title { text-align: center; font-size: 18px; font-weight: 700; letter-spacing: 3px; margin-top: 8px; }
+  .subtitle { text-align: center; font-size: 11px; color: #999; letter-spacing: 1px; margin-top: 4px; margin-bottom: 24px; }
+  .input-wrap { position: relative; margin-bottom: 14px; }
+  .input-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 16px; opacity: 0.6; }
+  .input-wrap input {
+    width: 100%; padding: 14px 14px 14px 42px;
+    background: rgba(20,20,20,0.9); border: 1px solid rgba(240,180,0,0.3);
+    border-radius: 10px; color: #fff; font-size: 14px; outline: none;
+  }
+  .input-wrap input::placeholder { color: rgba(255,255,255,0.4); }
+  .input-wrap input:focus { border-color: #f0b400; box-shadow: 0 0 12px rgba(240,180,0,0.35); }
+  .btn-row { display: flex; gap: 10px; margin-top: 18px; }
+  .btn {
+    flex: 1; padding: 14px; border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 700; letter-spacing: 1.5px; cursor: pointer; text-transform: uppercase;
+  }
+  .btn-admin { background: transparent; border: 1.5px solid rgba(240,180,0,0.5); color: #f0b400; }
+  .btn-login { background: linear-gradient(180deg, #f5c518, #e0a800); color: #000; box-shadow: 0 4px 16px rgba(240,180,0,0.5); }
+  .btn-login:disabled { opacity: 0.5; }
+  .btn-copy {
+    width: 100%; margin-top: 12px; padding: 12px;
+    background: linear-gradient(180deg, #e91e63, #c2185b);
+    border: none; border-radius: 10px; color: #fff;
+    font-size: 13px; font-weight: 700; letter-spacing: 1.5px; cursor: pointer;
+  }
+  .status-msg { margin-top: 16px; text-align: center; font-size: 12px; min-height: 20px; }
+  .status-msg.ok { color: #4ade80; }
+  .status-msg.err { color: #f87171; }
+  .status-msg.info { color: #f0b400; }
+  .device-info { margin-top: 14px; text-align: center; font-size: 10px; color: #666; word-break: break-all; }
+  .debug-info { margin-top: 10px; font-size: 9px; color: #555; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; word-break: break-all; max-height: 100px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<div class="bg-glow"></div>
+
+<div class="login-box">
+  <div class="lock-icon">🔒</div>
+  <div class="title">SYSTEM ACCESS</div>
+  <div class="subtitle">Authorized Personnel Only</div>
+
+  <div class="input-wrap">
+    <span class="input-icon">👤</span>
+    <input type="text" id="username" placeholder="Username" autocomplete="off">
+  </div>
+
+  <div class="input-wrap">
+    <span class="input-icon">🔑</span>
+    <input type="password" id="password" placeholder="Password" autocomplete="off">
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-admin" onclick="adminPanel()">ADMIN</button>
+    <button class="btn btn-login" id="loginBtn" onclick="doLogin()">LOGIN</button>
+  </div>
+
+  <button class="btn-copy" onclick="copyDeviceId()">📋 COPY ID</button>
+
+  <div class="status-msg" id="statusMsg"></div>
+  <div class="device-info" id="deviceInfo"></div>
+  <div class="debug-info" id="debugInfo"></div>
+</div>
+
+<script>
+const API_BASE = "https://abk-token.netlify.app/api";
+const ADMIN_URL = "https://abk-token.netlify.app/";
+
+const debugEl = document.getElementById("debugInfo");
+function logDebug(msg) { if (debugEl) debugEl.textContent += msg + "\n"; }
+logDebug("URL: " + API_BASE);
+
+let deviceId = "unknown";
+try {
+  if (typeof AndroidBridge !== "undefined" && AndroidBridge.getDeviceId) {
+    deviceId = AndroidBridge.getDeviceId();
+    logDebug("Bridge OK");
+  }
+} catch (e) { logDebug("Bridge err: " + e.message); }
+
+if (deviceId === "unknown") {
+  const urlHwid = new URLSearchParams(window.location.search).get("hwid");
+  if (urlHwid) deviceId = urlHwid;
+}
+
+if (deviceId === "unknown") deviceId = "browser-" + Math.random().toString(36).substring(2, 10);
+
+document.getElementById("deviceInfo").textContent = "HWID: " + deviceId;
+
+async function testServer() {
+  try {
+    logDebug("Test koneksi...");
+    const res = await fetch(API_BASE + "/users?action=config", { method: "GET" });
+    logDebug("Status: " + res.status);
+    const data = await res.json();
+    logDebug("Server OK");
+  } catch (e) {
+    logDebug("GAGAL: " + e.message);
+  }
+}
+testServer();
+
+function copyDeviceId() {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(deviceId).then(() => {
+      showStatus("✅ Device ID dicopy!", "ok");
+    }).catch(() => fallbackCopy());
+  } else { fallbackCopy(); }
+}
+function fallbackCopy() {
+  const ta = document.createElement("textarea");
+  ta.value = deviceId; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); showStatus("✅ Device ID dicopy!", "ok"); }
+  catch (e) { showStatus("❌ Gagal copy", "err"); }
+  document.body.removeChild(ta);
+}
+
+function adminPanel() {
+  if (typeof AndroidBridge !== "undefined" && AndroidBridge.openUrl) {
+    AndroidBridge.openUrl(ADMIN_URL);
+  } else { window.open(ADMIN_URL, "_blank"); }
+}
+
+async function doLogin() {
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value.trim();
+  const btn = document.getElementById("loginBtn");
+
+  if (!username || !password) { showStatus("❌ Isi username & password", "err"); return; }
+
+  btn.disabled = true; btn.textContent = "...";
+  showStatus("⏳ Menghubungkan...", "info");
+  logDebug("LOGIN: " + username);
+
+  try {
+    const url = API_BASE + "/users?action=verify&username=" + encodeURIComponent(username) + "&hwid=" + encodeURIComponent(deviceId) + "&password=" + encodeURIComponent(password);
+    logDebug("Fetch...");
+    const res = await fetch(url, { method: "GET" });
+    logDebug("Status: " + res.status);
+    const data = await res.json();
+    logDebug("Data: " + JSON.stringify(data).substring(0, 100));
+
+    if (data.success) {
+      showStatus("✅ Login berhasil!", "ok");
+      if (typeof AndroidBridge !== "undefined" && AndroidBridge.onLoginSuccess) {
+        AndroidBridge.onLoginSuccess(username, JSON.stringify(data));
+      }
+    } else {
+      showStatus("❌ " + (data.message || "Login gagal"), "err");
+      btn.disabled = false; btn.textContent = "LOGIN";
+    }
+  } catch (e) {
+    showStatus("❌ Gagal koneksi ke server", "err");
+    logDebug("ERROR: " + e.message);
+    btn.disabled = false; btn.textContent = "LOGIN";
+  }
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById("statusMsg");
+  el.textContent = msg;
+  el.className = "status-msg " + (type || "info");
+}
+
+document.getElementById("password").addEventListener("keypress", (e) => {
+  if (e.key === "Enter") doLogin();
+});
+</script>
+
+</body>
+  </html>

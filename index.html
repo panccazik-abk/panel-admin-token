@@ -388,7 +388,7 @@ function toast(msg, type = "info") {
   setTimeout(() => t.className = "", 2500);
 }
 
-// ===== LOGIN =====
+// ===== LOGIN (SUDAH DIPERBAIKI) =====
 async function doLogin() {
   const err = document.getElementById("loginError");
   const lock = checkLockout();
@@ -406,14 +406,23 @@ async function doLogin() {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
     });
+    
     const data = await res.json();
-    if (!data.success) throw new Error(data.message);
+    
+    // PERBAIKAN: Cek apakah HTTP Status OK (200) ATAU ada token
+    // Ini mencegah error "Email atau password salah" padahal backend sukses
+    if (!res.ok || !data.token) {
+        throw new Error(data.message || "Email atau password salah");
+    }
+
+    // Jika berhasil
     token = data.token;
     localStorage.setItem("admin_token", token);
     clearAttempts();
     showDashboard(username);
     addLog("login", `Admin ${username} login`);
     toast("✅ Login berhasil!", "success");
+    
   } catch (e) {
     recordFailed();
     const a = getAttempts();
@@ -906,4 +915,4 @@ document.addEventListener("DOMContentLoaded", () => {
 })();
 </script>
 </body>
-</html>
+          </html>

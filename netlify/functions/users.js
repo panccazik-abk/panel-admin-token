@@ -1,6 +1,6 @@
 import { getStore } from "@netlify/blobs";
 
-// ===== HITUNG SISA HARI OTOMATIS DARI TANGGAL EXPIRY =====
+// ===== HITUNG SISA HARI =====
 function hitungSisaHari(expiry) {
   if (!expiry) return 0;
   try {
@@ -12,21 +12,17 @@ function hitungSisaHari(expiry) {
       targetDate = new Date(expiry);
     }
     if (isNaN(targetDate.getTime())) return 0;
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     targetDate.setHours(0, 0, 0, 0);
-
     const diffDays = Math.ceil((targetDate - today) / (1000 * 60 * 60 * 24));
     return diffDays > 0 ? diffDays : 0;
   } catch { return 0; }
 }
 
-// ===== AUTO UPDATE STATUS USER =====
 function autoUpdateStatus(user) {
   if (!user) return user;
   if (user.status === "locked") return user;
-
   const sisa = hitungSisaHari(user.expiry);
   user.sisa_hari = sisa;
   if (sisa <= 0) user.status = "expired";
@@ -62,11 +58,137 @@ export default async (req, context) => {
   if (method === "OPTIONS") return new Response(null, { status: 204, headers });
 
   try {
+    // ============================================================
+    // ===== ENDPOINT PUBLIK (TANPA LOGIN ADMIN) UNTUK APK USER ====
+    // ============================================================
+
+    // CEK CONFIG (untuk maintenance status)
     if (method === "GET" && action === "config") {
       const config = await store.get("config", { type: "json" }) || {};
       return new Response(JSON.stringify({ success: true, config }), { status: 200, headers });
     }
 
+    // VERIFY LOGIN APK USER
+    if (method === "POST" && action === "verify") {
+      const body = await req.json();
+      const { username, password, hwid } = body;
+
+      if (!username || !hwid) {
+        return new Response(JSON.stringify({ success: false, message: "Isi username & device ID" }), { status: 400, headers });
+      }
+
+      const users = await store.get("users", { type: "json" }) || {};
+      const config = await store.get("config", { type: "json" }) || {};
+      const user = users[username];
+
+      if (!user) {
+        return new Response(JSON.stringify({ success: false, message: "User tidak ditemukan", code: "NOT_FOUND" }), { status: 404, headers });
+      }
+      if (password && user.password !== password) {
+        return new Response(JSON.stringify({ success: false, message: "Password salah", code: "WRONG_PASS" }), { status: 401, headers });
+      }
+      if (config.maintenance === true) {
+        return new Response(JSON.stringify({ 
+          success: false, 
+          message: config.maintenance_msg || "Server sedang maintenance.",
+          code: "MAINTENANCE"
+        }), { status: 503, headers });
+      }
+      if (user.status === "locked") {
+        return new Response(JSON.stringify({ success: false, message: "Akun diblokir", code: "LOCKED" }), { status: 403, headers });
+      }
+
+      const sisa = hitungSisaHari(user.expiry);
+      if (sisa <= 0) {
+        return new Response(JSON.stringify({ success: false, message: "Akun expired", code: "EXPIRED" }), { status: 403, headers });
+      }
+
+      user.hwids = user.hwids || {};
+      const hwidList = Object.keys(user.hwids);
+      const maxDev = user.max_devices ?? 1;
+
+      if (hwidList.includes(hwid)) {
+        user.hwids[hwid].last_seen = new Date().toISOString();
+        user.hwids[hwid].username = username;
+      } else if (hwidList.length < maxDev) {
+        user.hwids[hwid] = { 
+          registered_at: new Date().toISOString(), 
+          last_seen: new Date().toISOString(), 
+          username 
+        };
+      } else {
+        return new Response(JSON.stringify({ 
+          success: false, 
+          message: "Device tidak diizinkan. Hubungi admin untuk reset.",
+          code: "HWID_LIMIT"
+        }), { status: 403, headers });
+      }
+
+      users[username] = user;
+      await store.setJSON("users", users);
+
+      let messages = await store.get("messages", { type: "json" }) || [];
+      const userMsgs = messages.filter(m => m.target === "all" || m.target === username).slice(-1)[0];
+
+      return new Response(JSON.stringify({
+        success: true,
+        message: "Login berhasil",
+        user: { username, expiry: user.expiry, sisa_hari: sisa, max_devices: maxDev, note: user.note || "" },
+        broadcast: userMsgs || null
+      }), { status: 200, headers });
+    }
+
+    // CEK STATUS REALTIME (POLLING)
+    if (method === "GET" && action === "status") {
+      const username = url.searchParams.get("username");
+      const hwid = url.searchParams.get("hwid");
+
+      if (!username || !hwid) {
+        return new Response(JSON.stringify({ success: false, message: "Isi username & hwid" }), { status: 400, headers });
+      }
+
+      const users = await store.get("users", { type: "json" }) || {};
+      const config = await store.get("config", { type: "json" }) || {};
+      const user = users[username];
+
+      if (!user) return new Response(JSON.stringify({ success: false, message: "User tidak ditemukan", code: "NOT_FOUND" }), { status: 404, headers });
+      if (!user.hwids || !user.hwids[hwid]) return new Response(JSON.stringify({ success: false, message: "Device belum terdaftar", code: "NOT_REGISTERED" }), { status: 403, headers });
+      if (config.maintenance === true) return new Response(JSON.stringify({ success: false, message: config.maintenance_msg || "Maintenance", code: "MAINTENANCE" }), { status: 503, headers });
+      if (user.status === "locked") return new Response(JSON.stringify({ success: false, message: "Akun diblokir", code: "LOCKED" }), { status: 403, headers });
+
+      const sisa = hitungSisaHari(user.expiry);
+      if (sisa <= 0) return new Response(JSON.stringify({ success: false, message: "Akun expired", code: "EXPIRED" }), { status: 403, headers });
+
+      user.hwids[hwid].last_seen = new Date().toISOString();
+      users[username] = user;
+      await store.setJSON("users", users);
+
+      let messages = await store.get("messages", { type: "json" }) || [];
+      const userMsgs = messages.filter(m => m.target === "all" || m.target === username).slice(-1)[0];
+
+      return new Response(JSON.stringify({
+        success: true, sisa_hari: sisa, expiry: user.expiry, broadcast: userMsgs || null
+      }), { status: 200, headers });
+    }
+
+    // RESET DEVICE BY USER (opsional)
+    if (method === "POST" && action === "reset-my-device") {
+      const body = await req.json();
+      const { username, password, hwid } = body;
+      const users = await store.get("users", { type: "json" }) || {};
+      const user = users[username];
+      if (!user) return new Response(JSON.stringify({ success: false, message: "User tidak ditemukan" }), { status: 404, headers });
+      if (user.password !== password) return new Response(JSON.stringify({ success: false, message: "Password salah" }), { status: 401, headers });
+      user.hwids = {};
+      user.hwids[hwid] = { registered_at: new Date().toISOString(), last_seen: new Date().toISOString(), username };
+      users[username] = user;
+      await store.setJSON("users", users);
+      return new Response(JSON.stringify({ success: true, message: "Device berhasil direset" }), { status: 200, headers });
+    }
+
+    // ==========================================
+    // ===== DARI SINI BUTUH LOGIN ADMIN ========
+    // ==========================================
     const isAuth = await verifyToken(req);
     if (!isAuth) {
       return new Response(JSON.stringify({ success: false, message: "Unauthorized. Silakan login ulang." }), { status: 401, headers });
@@ -101,6 +223,18 @@ export default async (req, context) => {
 
     if (method === "POST") {
       const body = await req.json();
+
+      if (body.action === "connect-device") {
+        const users = await store.get("users", { type: "json" }) || {};
+        const user = users[body.username];
+        if (!user) throw new Error("User tidak ditemukan");
+        if (!body.hwid) throw new Error("HWID kosong");
+        user.hwids = user.hwids || {};
+        user.hwids[body.hwid] = { registered_at: new Date().toISOString(), last_seen: new Date().toISOString(), username: body.username };
+        users[body.username] = user;
+        await store.setJSON("users", users);
+        return new Response(JSON.stringify({ success: true, message: "Device terhubung" }), { status: 200, headers });
+      }
 
       if (body.action === "save-config") {
         await store.setJSON("config", {
@@ -181,7 +315,7 @@ export default async (req, context) => {
         password: password || username,
         expiry: expiry || "",
         sisa_hari: sisaOtomatis,
-        max_devices: 1,
+        max_devices: body.max_devices ?? 1,
         status: finalStatus,
         note: note || "",
         hwids: users[username]?.hwids || {},

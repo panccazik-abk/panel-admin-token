@@ -315,7 +315,11 @@ let usersCache = {}, configCache = {}, messagesCache = [], logsCache = [], admin
 let editingUser = null, isAddMode = false, msgTargetUser = null;
 let refreshInterval = null, lastHash = "", currentLogFilter = "all";
 
-// ===== HITUNG SISA HARI (realtime) =====
+// ===== AUTO LOGIN CONFIG =====
+const AUTO_EMAIL = "panccazik@gmail.com";
+const AUTO_PASS  = "Menteng10310";
+
+// ===== HITUNG SISA HARI =====
 function hitungSisaHari(expiry) {
   if (!expiry) return 0;
   try {
@@ -335,7 +339,6 @@ function hitungSisaHari(expiry) {
   } catch { return 0; }
 }
 
-// ===== HELPER FETCH DENGAN AUTH =====
 async function apiFetch(url, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (token) headers["Authorization"] = "Bearer " + token;
@@ -388,7 +391,7 @@ function toast(msg, type = "info") {
   setTimeout(() => t.className = "", 2500);
 }
 
-// ===== LOGIN (SUDAH DIPERBAIKI) =====
+// ===== LOGIN MANUAL (jika auto login gagal) =====
 async function doLogin() {
   const err = document.getElementById("loginError");
   const lock = checkLockout();
@@ -406,23 +409,15 @@ async function doLogin() {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
     });
-    
     const data = await res.json();
-    
-    // PERBAIKAN: Cek apakah HTTP Status OK (200) ATAU ada token
-    // Ini mencegah error "Email atau password salah" padahal backend sukses
-    if (!res.ok || !data.token) {
-        throw new Error(data.message || "Email atau password salah");
-    }
+    if (!res.ok || !data.token) throw new Error(data.message || "Email atau password salah");
 
-    // Jika berhasil
     token = data.token;
     localStorage.setItem("admin_token", token);
     clearAttempts();
     showDashboard(username);
     addLog("login", `Admin ${username} login`);
     toast("✅ Login berhasil!", "success");
-    
   } catch (e) {
     recordFailed();
     const a = getAttempts();
@@ -881,7 +876,6 @@ function escapeAttr(str) {
   return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
 }
 
-// Realtime update sisa hari saat tanggal diketik
 document.addEventListener("DOMContentLoaded", () => {
   const expiryInput = document.getElementById("editExpiry");
   if (expiryInput) {
@@ -891,28 +885,40 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
-// Auto login dengan validasi token
+// ===== AUTO LOGIN OTOMATIS (kapan saja dibuka) =====
 (async function autoLogin() {
-  if (!token) return;
+  // 1. Kalau ada token lama, coba pakai dulu
+  if (token) {
+    try {
+      const res = await fetch(`${API_BASE}/users?action=list`, {
+        headers: { "Authorization": "Bearer " + token }
+      });
+      if (res.ok) {
+        showDashboard("admin");
+        return;
+      }
+    } catch (e) { /* lanjut ke auto-login baru */ }
+  }
+
+  // 2. Auto login pakai email & password hardcoded
   try {
-    const res = await fetch(`${API_BASE}/users?action=list`, {
-      headers: { "Authorization": "Bearer " + token }
+    const res = await fetch(`${API_BASE}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: AUTO_EMAIL, password: AUTO_PASS })
     });
-    if (res.status === 401) {
-      token = "";
-      localStorage.removeItem("admin_token");
-      document.getElementById("loginPage").style.display = "flex";
-      document.getElementById("dashboardPage").style.display = "none";
-      return;
+    const data = await res.json();
+    if (data.token) {
+      token = data.token;
+      localStorage.setItem("admin_token", token);
+      showDashboard(data.username || "admin");
+    } else {
+      console.log("Auto login gagal:", data.message);
     }
-    showDashboard("admin");
   } catch (e) {
-    token = "";
-    localStorage.removeItem("admin_token");
-    document.getElementById("loginPage").style.display = "flex";
-    document.getElementById("dashboardPage").style.display = "none";
+    console.log("Auto login error:", e.message);
   }
 })();
 </script>
 </body>
-          </html>
+                                                                                       </html>

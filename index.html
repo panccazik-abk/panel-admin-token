@@ -10,7 +10,6 @@
   * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
   body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; transition: 0.3s; }
 
-  /* LOADING SCREEN */
   #loadingScreen { display: flex; align-items: center; justify-content: center; min-height: 100vh; flex-direction: column; gap: 16px; }
   .spinner { width: 40px; height: 40px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -48,7 +47,7 @@
   .toolbar input:focus, .toolbar select:focus { border-color: var(--accent); }
   .btn-toolbar { padding: 9px 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; }
 
-  .user-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+  .user-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
   .user-card { background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
   .user-card.locked { border-color: #ef4444; opacity: 0.85; }
   .user-card .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -63,6 +62,14 @@
   .user-card .actions button { flex: 1; min-width: 36px; padding: 7px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; color: #fff; }
   .btn-edit { background: #0ea5e9; } .btn-del { background: #ef4444; } .btn-lock { background: #f59e0b; }
   .btn-unlock { background: #10b981; } .btn-msg { background: #8b5cf6; } .btn-reset { background: #64748b; }
+
+  .connect-box { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  .connect-box label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
+  .connect-row { display: flex; gap: 6px; }
+  .connect-row input { flex: 1; padding: 8px 10px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); outline: none; }
+  .connect-row input:focus { border-color: #22c55e; }
+  .connect-row button { background: #22c55e; color: #fff; border: none; border-radius: 6px; padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .connect-row button:hover { background: #16a34a; }
 
   .form-group { margin-bottom: 14px; }
   .form-group label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
@@ -101,13 +108,11 @@
 </head>
 <body>
 
-<!-- LOADING SCREEN (Tampil sebentar saat auto-login) -->
 <div id="loadingScreen">
   <div class="spinner"></div>
   <div id="loadingText">Memuat Panel Admin...</div>
 </div>
 
-<!-- DASHBOARD (Langsung tampil setelah auto-login berhasil) -->
 <div id="dashboardPage">
   <div class="topbar">
     <div>
@@ -260,7 +265,7 @@
     <div class="form-group"><label>Password</label><input type="text" id="editPassword"></div>
     <div class="form-group"><label>Expiry (DD/MM/YYYY)</label><input type="text" id="editExpiry" placeholder="10/10/2026"></div>
     <div class="form-group"><label>Sisa Hari (Otomatis)</label><input type="text" id="editSisaHari" value="0" readonly style="opacity:0.7;cursor:not-allowed;"></div>
-    <div class="form-group"><label>Max Devices</label><input type="number" id="editMaxDevices" value="1" readonly></div>
+    <div class="form-group"><label>Max Devices</label><input type="number" id="editMaxDevices" value="1"></div>
     <div class="form-group"><label>Status</label>
       <select id="editStatus">
         <option value="active">✅ Active</option>
@@ -307,7 +312,6 @@ let usersCache = {}, configCache = {}, messagesCache = [], logsCache = [], admin
 let editingUser = null, isAddMode = false, msgTargetUser = null;
 let refreshInterval = null, lastHash = "", currentLogFilter = "all";
 
-// ===== AUTO LOGIN CONFIG =====
 const AUTO_EMAIL = "panccazik@gmail.com";
 const AUTO_PASS  = "Menteng10310";
 
@@ -334,12 +338,12 @@ async function apiFetch(url, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (token) headers["Authorization"] = "Bearer " + token;
   const res = await fetch(url, { ...options, headers });
-  if (res.status === 401) { 
-    toast("❌ Sesi habis, login ulang otomatis...", "error"); 
+  if (res.status === 401) {
+    toast("❌ Sesi habis, login ulang otomatis...", "error");
     token = "";
     localStorage.removeItem("admin_token");
     autoLoginNow();
-    throw new Error("Unauthorized"); 
+    throw new Error("Unauthorized");
   }
   return res;
 }
@@ -420,6 +424,10 @@ function updateStats() {
   document.getElementById("statLocked").textContent = users.filter(u => u.status === "locked").length;
 }
 
+function safeId(str) {
+  return String(str).replace(/[^a-zA-Z0-9]/g, "_");
+}
+
 function filterUsers() {
   const search = document.getElementById("searchInput").value.toLowerCase();
   const filter = document.getElementById("filterStatus").value;
@@ -436,6 +444,14 @@ function filterUsers() {
     const badgeClass = isLocked ? "locked" : (isActive ? "active" : "expired");
     const badgeText = isLocked ? "🔒 Locked" : (isActive ? "✅ Active" : "❌ Expired");
     const hwidCount = Object.keys(data.hwids || {}).length;
+    const sid = safeId(username);
+
+    // List HWID yang sudah terdaftar (maksimal tampil 2)
+    const hwidList = Object.keys(data.hwids || {});
+    let hwidHtml = "";
+    if (hwidList.length > 0) {
+      hwidHtml = `<div style="font-size:10px;color:var(--text-mute);margin-top:4px;word-break:break-all;">📎 ${hwidList.map(h => escapeHtml(h.slice(0,16)) + (h.length>16?"...":"")).join(", ")}</div>`;
+    }
 
     grid.innerHTML += `
       <div class="user-card ${isLocked ? 'locked' : ''}">
@@ -448,6 +464,14 @@ function filterUsers() {
           <div>📅 Expiry: <b>${escapeHtml(data.expiry || "-")}</b></div>
           <div>📱 Device: <b>${hwidCount}/${data.max_devices ?? 1}</b></div>
           <div>⏳ Sisa: <b>${data.sisa_hari ?? "-"} hari</b></div>
+          ${hwidHtml}
+        </div>
+        <div class="connect-box">
+          <label>📲 Connect Device (Tempel Device ID dari user):</label>
+          <div class="connect-row">
+            <input type="text" id="hwid-input-${sid}" placeholder="Contoh: a1b2c3d4e5f6..." autocomplete="off">
+            <button onclick="connectDevice('${escapeAttr(username)}')">🔗 Connect</button>
+          </div>
         </div>
         <div class="actions">
           <button class="btn-edit" onclick="openEditModal('${escapeAttr(username)}')">✏️</button>
@@ -459,6 +483,27 @@ function filterUsers() {
       </div>`;
   });
   if (shown === 0) grid.innerHTML = '<div class="empty" style="grid-column:1/-1">🔍 Tidak ada user</div>';
+}
+
+async function connectDevice(username) {
+  const sid = safeId(username);
+  const input = document.getElementById("hwid-input-" + sid);
+  if (!input) { toast("❌ Input tidak ditemukan", "error"); return; }
+  const hwid = input.value.trim();
+  if (!hwid) { toast("❌ Tempel Device ID dulu!", "error"); return; }
+
+  try {
+    const res = await apiFetch(`${API_BASE}/users`, {
+      method: "POST",
+      body: JSON.stringify({ username, action: "connect-device", hwid: hwid })
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.message);
+    toast("🔗 Device berhasil terhubung!", "success");
+    addLog("edit", `Connect device ${hwid.slice(0,12)}... ke user ${username}`);
+    input.value = "";
+    loadUsers();
+  } catch (e) { toast("❌ " + e.message, "error"); }
 }
 
 function populateUserDropdown() {
@@ -532,6 +577,7 @@ async function saveUser() {
     username,
     password: document.getElementById("editPassword").value,
     expiry: document.getElementById("editExpiry").value,
+    max_devices: parseInt(document.getElementById("editMaxDevices").value) || 1,
     status: document.getElementById("editStatus").value
   };
   try {
@@ -824,26 +870,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
-// ===== AUTO LOGIN SILENT (Tanpa Form Login) =====
+// ===== AUTO LOGIN SILENT =====
 async function autoLoginNow() {
   document.getElementById("loadingScreen").style.display = "flex";
   document.getElementById("dashboardPage").style.display = "none";
   document.getElementById("loadingText").textContent = "Memuat Panel Admin...";
+  document.getElementById("loadingText").style.color = "var(--text-dim)";
 
-  // 1. Coba pakai token lama
   if (token) {
     try {
       const res = await fetch(`${API_BASE}/users?action=list`, {
         headers: { "Authorization": "Bearer " + token }
       });
-      if (res.ok) {
-        showDashboard("admin");
-        return;
-      }
-    } catch (e) { /* Lanjut auto login baru */ }
+      if (res.ok) { showDashboard("admin"); return; }
+    } catch (e) {}
   }
 
-  // 2. Auto login dengan kredensial hardcoded
   try {
     const res = await fetch(`${API_BASE}/login`, {
       method: "POST",
@@ -865,8 +907,7 @@ async function autoLoginNow() {
   }
 }
 
-// Jalankan auto-login saat halaman dibuka
 autoLoginNow();
 </script>
 </body>
-  </html>
+        </html>

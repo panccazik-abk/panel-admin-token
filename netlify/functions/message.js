@@ -28,7 +28,6 @@ export default async (req, context) => {
   if (method === "OPTIONS") return new Response(null, { status: 204, headers });
 
   try {
-    // Ambil pesan terbaru untuk user (PUBLIK, dipakai APK)
     if (method === "GET" && action === "latest") {
       const username = url.searchParams.get("username");
       let messages = await store.get("messages", { type: "json" }) || [];
@@ -37,9 +36,7 @@ export default async (req, context) => {
     }
 
     const isAuth = await verifyToken(req);
-    if (!isAuth) {
-      return new Response(JSON.stringify({ success: false, message: "Unauthorized" }), { status: 401, headers });
-    }
+    if (!isAuth) return new Response(JSON.stringify({ success: false, message: "Unauthorized" }), { status: 401, headers });
 
     if (method === "GET" && action === "list") {
       const messages = await store.get("messages", { type: "json" }) || [];
